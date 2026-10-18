@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<title>KORA 기사 출퇴근</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { --navy:#1F3A68; --accent:#F28C28; }
+  body { margin:0; font-family:'Noto Sans KR','Malgun Gothic',sans-serif; background:#F4F6FA; color:#222; }
+  header { background:var(--navy); color:#fff; padding:16px; text-align:center; }
+  header .car { font-size:40px; font-weight:800; letter-spacing:2px; }
+  header .plate { opacity:.85; }
+  .wrap { padding:16px; max-width:480px; margin:0 auto; }
+  .label { font-weight:700; margin:8px 0; color:var(--navy); }
+  .drivers { display:flex; gap:10px; }
+  .drv { flex:1; padding:18px 8px; font-size:20px; border:2px solid var(--navy); background:#fff; color:var(--navy); border-radius:12px; }
+  .drv.sel { background:var(--navy); color:#fff; }
+  .big { width:100%; padding:26px; font-size:28px; font-weight:800; border:0; border-radius:14px; color:#fff; margin-top:14px; }
+  #in { background:var(--accent); } #out { background:#555; }
+  .big:disabled { opacity:.4; }
+  .status { margin-top:18px; background:#fff; border-radius:12px; padding:14px; font-size:18px; text-align:center; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .on { color:#27AE60; font-weight:800; } .off { color:#999; font-weight:800; }
+  .msg { text-align:center; margin-top:10px; min-height:22px; color:#C0392B; }
+</style>
+</head>
+<body>
+<header><div class="car" id="car">-</div><div class="plate" id="plate"></div></header>
+<div class="wrap">
+  <div class="label">기사 선택</div>
+  <div class="drivers" id="drivers"></div>
+  <button class="big" id="in" disabled>출근</button>
+  <button class="big" id="out" disabled>퇴근</button>
+  <div class="status" id="status">상태 확인 중…</div>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+  var CAR = (new URLSearchParams(location.search).get('car') || '').trim();
+  var API = 'https://script.google.com/macros/s/AKfycbxVqdlQ9rWHB_GGuIaisd7LW0g5bousv9Zif5EpE7rUc1ZEyV2_bijXxvm03yNGkWljlA/exec';
+  // GAS 콜드스타트(7~12초) 대비: 25초 타임아웃, 자동 재시도 1회
+  function apiGet(params, tries) {
+    tries = tries == null ? 2 : tries;
+    var qs = Object.keys(params).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 25000);
+    return fetch(API + '?' + qs + '&_=' + Date.now(), { method: 'GET', redirect: 'follow', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) { clearTimeout(timer); return j; },
+            function (e) { clearTimeout(timer); if (tries > 1) return apiGet(params, tries - 1); throw e; });
+  }
+  function errText(e) {
+    return (e && e.name === 'AbortError') ? '서버 응답이 늦습니다. 잠시 후 자동으로 다시 시도합니다.' : '서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.';
+  }
+
+  var picked = '', duty = null;
+  function $(id) { return document.getElementById(id); }
+  var MAP = { apiDrivers: ['drivers', ['car']], apiStatus: ['status', ['car']], apiClockIn: ['clockIn', ['car', 'driver']], apiClockOut: ['clockOut', ['car', 'driver']] };
+  function call(fn, args, ok, quiet) {
+    if (!quiet) $('msg').textContent = '처리 중입니다… 잠시만 기다려 주세요.';
+    var m = MAP[fn], p = { api: m[0] };
+    m[1].forEach(function (k, i) { p[k] = args[i] == null ? '' : args[i]; });
+    // 출퇴근(쓰기)은 중복 기록 방지를 위해 재시도하지 않음
+    var tries = (fn === 'apiClockIn' || fn === 'apiClockOut') ? 1 : 2;
+    apiGet(p, tries).then(function (res) {
+      if (!quiet) $('msg').textContent = '';
+      if (res && res.ok === false) { $('msg').textContent = res.error || '오류'; return; }
+      ok(res);
+    }).catch(function (e) { $('msg').textContent = errText(e); });
+  }
+  function updateButtons() {
+    $('in').disabled = !picked;
+    $('out').disabled = !(duty && duty.onDuty);
+  }
+  function showStatus(s) {
+    duty = s;
+    $('status').innerHTML = s.onDuty
+      ? '<span class="on">근무 중</span><br>' + s.driver + ' · ' + s.since.slice(11, 16) + ' 출근<br>상태: ' + (s.state || '-') + ' · 오늘 ' + (s.rounds || 0) + '회'
+      : '<span class="off">퇴근 상태</span>';
+    if (s.onDuty && !picked) pick(s.driver);
+    updateButtons();
+  }
+  function pick(name) {
+    picked = name;
+    Array.prototype.forEach.call(document.querySelectorAll('.drv'), function (b) {
+      b.classList.toggle('sel', b.textContent === name);
+    });
+    updateButtons();
+  }
+  function loadStatus(quiet) { call('apiStatus', [CAR], showStatus, quiet); }
+
+  if (!CAR) { $('status').textContent = '주소에 ?car=차량번호 를 붙여주세요'; }
+  else {
+    $('car').textContent = CAR;
+    call('apiDrivers', [CAR], function (d) {
+      $('plate').textContent = d.plate || '';
+      $('drivers').innerHTML = '';
+      d.drivers.forEach(function (n) {
+        var b = document.createElement('button');
+        b.className = 'drv'; b.textContent = n; b.onclick = function () { pick(n); };
+        $('drivers').appendChild(b);
+      });
+      loadStatus();
+    });
+    $('in').onclick = function () {
+      if (!picked) return;
+      if (duty && duty.onDuty && duty.driver !== picked &&
+          !confirm(duty.driver + ' 기사가 자동 퇴근 처리됩니다. 계속할까요?')) return;
+      call('apiClockIn', [CAR, picked], function () { $('msg').textContent = ''; loadStatus(); });
+    };
+    $('out').onclick = function () {
+      if (!confirm('퇴근 처리할까요?')) return;
+      call('apiClockOut', [CAR, picked], function () { loadStatus(); });
+    };
+    setInterval(function () { loadStatus(true); }, 60000);
+  }
+</script>
+</body>
+</html>
