@@ -104,13 +104,19 @@
       bounds.push([z.lat, z.lng]);
     });
 
+    function spdText(v) {
+      if (v.speedKmh == null || v.speedKmh === '' || isNaN(Number(v.speedKmh))) return '';
+      var k = Number(v.speedKmh);
+      if (k === 0) return v.stoppedMin >= 1 ? '<span class="spd">정차 ' + v.stoppedMin + '분</span>' : '<span class="spd">0 km/h</span>';
+      return '<span class="spd"' + (k > 80 ? ' style="color:#d32f2f;font-weight:bold"' : '') + '>' + Math.round(k) + ' km/h</span>';
+    }
     // 차량 마커
     d.vehicles.forEach(function (v) {
       if (v.lat == null || v.lng == null || v.lat === '') { if (markers[v.car]) { map.removeLayer(markers[v.car]); delete markers[v.car]; } return; }
       var stale = v.ageSec == null || v.ageSec > 600;
       var icon = L.divIcon({ className: '', iconSize: null,
         html: '<div class="truck' + (stale ? ' stale' : '') + '" style="background:' + colorOf(v.state) + '">' + esc(v.car) + '</div>' });
-      var pop = '<b>' + esc(v.car) + '</b> ' + esc(v.plate) + '<br>' + esc(v.driver || '-') + ' · ' + esc(v.state) + '<br>' + ageText(v.ageSec);
+      var pop = '<b>' + esc(v.car) + '</b> ' + esc(v.plate) + '<br>' + esc(v.driver || '-') + ' · ' + esc(v.state) + '<br>' + ageText(v.ageSec) + (spdText(v) ? '<br>' + spdText(v) : '');
       if (markers[v.car]) markers[v.car].setLatLng([v.lat, v.lng]).setIcon(icon).setPopupContent(pop);
       else markers[v.car] = L.marker([v.lat, v.lng], { icon: icon }).bindPopup(pop).addTo(map);
       bounds.push([v.lat, v.lng]);
@@ -136,7 +142,7 @@
         '<div><b>' + esc(v.driver || '(미출근)') + '</b> <span class="sub">' + esc(v.plate) + '</span></div>' +
         '<div><span class="badge" style="background:' + colorOf(v.state) + '">' + esc(v.state) + '</span></div>' +
         '<div class="sub">오늘 ' + v.rounds + '회 · 최근 출발 ' + esc(v.lastDepart || '-') +
-        ' · 평균 회전 ' + (v.avgRoundMin != null ? v.avgRoundMin + '분' : '-') + ' · ' + ageText(v.ageSec) + '</div></div>';
+        ' · 평균 회전 ' + (v.avgRoundMin != null ? v.avgRoundMin + '분' : '-') + ' · ' + ageText(v.ageSec) + (spdText(v) ? ' · ' + spdText(v) : '') + '</div></div>';
     }).join('');
   }
 
